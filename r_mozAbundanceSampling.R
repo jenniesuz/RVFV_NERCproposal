@@ -74,10 +74,10 @@ ggplot(dat) +
   )
 
 #************************Simulations to determine number of traps************
-pwrFunc <- function(numTraps=5){
+pwrFunc <- function(...){
   library("GLMMmisc")
 days <- 1:3
-traps <- 1:numTraps
+traps <- 1:10
 pr <- c("periurban","rural")
 habitat <- c("grassland","crop")
 area <- LETTERS[1:4]
@@ -97,8 +97,6 @@ moz.data$days[(moz.data$area %in% "D")&(moz.data$days %in% 1)] <- 10
 moz.data$days[(moz.data$area %in% "D")&(moz.data$days %in% 2)] <- 11
 moz.data$days[(moz.data$area %in% "D")&(moz.data$days %in% 3)] <- 12
 
-moz.data$row.id <- factor(paste("row", 1:nrow(moz.data), sep = ""))
-
 moz.data<-
   sim.glmm(
     design.data = moz.data,
@@ -115,13 +113,12 @@ moz.data<-
         )),
     rand.V =
       inv.mor(
-        c(row.id = 2,              # the overdispersion median rate ratio (MRR) is 2
-          days = 1.2,
-          area = 1.3)),            # there is also variation between weeks (MRR=1.5)
-    distribution = "poisson")      # we are simulating a Poisson response
+        c(days = 1.8,
+          area = 1.8)),            
+    distribution = "poisson")      
 
 moz.pois <-
-    lme4::glmer(response ~ pr + habitat + (1 | area) + (1| days) + (1 | row.id),
+    lme4::glmer(response ~ pr + habitat + (1 | area) + (1| days) ,
                 family = "poisson", data = moz.data)
 output <- summary(moz.pois)
 cfs<-output$coefficients
@@ -140,8 +137,8 @@ return(c(pvalrural,pvalhabitat))
 
 sim.res <- mclapply(1:1000, pwrFunc, mc.cores =1)
 
-l<-do.call(rbind,sim.res51)
+l<-do.call(rbind,sim.res)
 l2<-rowSums(l)
-
+length(l2[l2==2])
 
 

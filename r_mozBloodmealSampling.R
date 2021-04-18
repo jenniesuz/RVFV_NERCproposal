@@ -5,13 +5,12 @@ library("GLMMmisc")
 library("parallel")
 
 #***************************************************************8
-#*###BLOODMEALS
-#*
-#*
-pwrFunc <- function(numInds=20){
+#*###BLOODMEALS#***********
+
+pwrFunc <- function(...){
   library("GLMMmisc")
   
-  inds <- numInds
+  inds <- 20
   pr <- c("periurban","rural")
   area <- LETTERS[1:4]
   numTraps<-1:20
@@ -19,7 +18,6 @@ pwrFunc <- function(numInds=20){
   moz.data <-
     expand.grid(inds=inds,pr=pr,area=area,numTraps=numTraps)
   
-  moz.data$row.id <- factor(paste("row", 1:nrow(moz.data), sep = ""))
   moz.data$response <- inds
   moz.data$n <- moz.data$response
   
@@ -36,9 +34,9 @@ pwrFunc <- function(numInds=20){
         ),
       rand.V =
         inv.mor(
-          c(area = 1.1
-            ,numTraps=1.2)),            # there is also variation between weeks (MRR=1.5)
-      distribution = "binomial")      # we are simulating a Poisson response
+          c(area = 1.3
+            ,numTraps=1.3)),            
+      distribution = "binomial")      
   
   moz.bin <-
     lme4::glmer(cbind(response, n - response) ~ pr + (1 | area) + (1 | numTraps) ,
@@ -54,11 +52,8 @@ pwrFunc <- function(numInds=20){
   return(c(pvalrural))
 }
 
-pwrFunc(numInds=100)
 
-sim.res100 <- mclapply(1:1000, pwrFunc, mc.cores =1)
-
-
-l<-do.call(rbind,sim.res100)
+sim.res <- mclapply(1:1000, pwrFunc, mc.cores =1)
+l<-do.call(rbind,sim.res)
 l2<-rowSums(l)
 sum(l2)
