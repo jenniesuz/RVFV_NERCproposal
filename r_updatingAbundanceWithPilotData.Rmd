@@ -1,0 +1,251 @@
+---
+title: "Updating power analysis using pilot data"
+author: "Jen"
+date: "2023-03-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(lme4)
+library(plyr)
+library(MASS)
+library("ggplot2")
+library("GLMMmisc")
+library("parallel")
+
+```
+
+## September 2022 results for Culex
+
+Read in and tidy the data. See sheet names of the excel file
+```{r }
+readxl::excel_sheets("SEP22_PILOT_CATCH_DATA.xlsx")
+
+```
+
+Select sheet names needed and combine
+```{r}
+village <- data.frame(readxl::read_excel("SEP22_PILOT_CATCH_DATA.xlsx","Village Table"))
+trapSet <- data.frame(readxl::read_excel("SEP22_PILOT_CATCH_DATA.xlsx","Trap Set - September"))
+catch <- data.frame(readxl::read_excel("SEP22_PILOT_CATCH_DATA.xlsx","Trap Catch"))
+
+dat <- merge(village,trapSet,by="V_ID",all.y=T)
+dat <- merge(dat,catch,by="TS_ID",all.y=T)
+```
+
+Focus only on Culex genus
+
+```{r}
+village <- data.frame(readxl::read_excel("SEP22_PILOT_CATCH_DATA.xlsx","Village Table"))
+trapSet <- data.frame(readxl::read_excel("SEP22_PILOT_CATCH_DATA.xlsx","Trap Set - September"))
+catch <- data.frame(readxl::read_excel("SEP22_PILOT_CATCH_DATA.xlsx","Trap Catch"))
+
+dat <- merge(village,trapSet,by="V_ID",all.y=T)
+dat <- merge(dat,catch,by="TS_ID",all.y=T)
+
+# focus only on culex - need to include zero for traps where no culex caught
+
+culex <- dat[dat$Genus %in% "Culex",] # 61 of 120 rows
+length(unique(culex$TS_ID)) # 28 traps
+length(unique(dat$TS_ID))   # of 54 traps
+notCulex <- dat[!dat$TS_ID %in% unique(culex$TS_ID),]
+# confirm result
+length(unique(notCulex$TS_ID))
+notCulex$Genus <- "Culex"
+notCulex$Total.Females <- 0
+
+datC <- rbind.data.frame(culex,notCulex)
+
+dat <- ddply(datC,.(District,Village,Date.deployed,TS_ID),summarise,moz=sum(Total.Females))
+
+```
+
+Based on census data assign village to either rural or mixed according to ward
+
+```{r}
+dat$type <- NA
+dat$wardType[dat$Village %in% "Mapea"] <- "mixed"
+dat$wardType[dat$Village %in% "Mtakuja"] <- "rural"
+dat$wardType[dat$Village %in% "Mheza"] <- "mixed"
+dat$wardType[dat$Village %in% "Ngarenaro St"] <- "mixed"
+dat$wardType[dat$Village %in% "Esilalaei"] <- "rural"
+dat$wardType[dat$Village %in% "Ruvu darajani"] <- "rural"
+dat$wardType[dat$Village %in% "Kikavu chini"] <- "rural"
+dat$wardType[dat$Village %in% "Kisutu"] <- "mixed"
+```
+
+Do some exploratory plots
+
+```{r}
+hist(dat$moz)
+```
+
+```{r}
+qqnorm(dat$moz)
+```
+
+```{r}
+ggplot(dat) +
+  geom_boxplot(aes(x=Village,y=moz))
+```
+
+```{r}
+ggplot(dat) +
+  geom_boxplot(aes(x=wardType,y=moz))
+```
+
+Unless there are less absence sites this time around probably going to need to do a zero inflated negative binomial. Not sure how to implement this properly just now in the power analysis but we can at least explore with negative binomial (poisson was used in the proposal)
+
+```{r}
+# analyse presence absence
+
+dat$present <- NA
+dat$present[dat$moz>0] <- 1
+dat$present[dat$moz==0] <- 0
+
+xtabs(present~wardType,data=dat)
+length(dat$moz[dat$wardType %in% "mixed"]) # 30
+length(dat$moz[dat$wardType %in% "rural"]) # 24
+20/30
+8/24
+
+presAbsMod1 <- glmer(present~wardType + (1|Village),family="binomial",data=dat)
+presAbsMod2 <- glmer(present~(1|Village),family="binomial",data=dat)
+presAbsMod3 <- glm(present~wardType,family="binomial",data=dat)
+AIC(presAbsMod1,presAbsMod2,presAbsMod3)
+
+#
+```
+
+```{r}
+# take away absences and look at abundance where present
+abund <- dat[dat$present==1,]
+abundMod1 <- glmer.nb(moz~wardType + (1|Village),data=abund)
+abundMod2 <- glmer.nb(moz~ (1|Village),data=abund)
+abundMod3 <- glm.nb(moz~wardType,data=abund)
+AIC(abundMod1,abundMod2,abundMod3)
+
+
+```
+
+
+## Power analysis
+Would suggest just assessing Culex abundance as this was the most common genus. We can assume all Culex species can transmit to a greater or lesser extent. A good contribution of our project would be to show broad differences between peri-urban and rural. I think it would take another project to do more nuanced species assessments.
+
+You can play with the input parameters to simulate data and compare it to our pilot data:
+
+```{r}
+simAbundanceDatFunc <- function(traps=1:6               # how many traps per day per landtype
+                                ,days=1                 # how many days per area per landtype
+                                ,area=LETTERS[1:12]    # how many 'areas' - village 
+                                ,daysRand=1.8           # traps random effect
+                                ,areaRand=4             # area random effect
+                                ,interc=5){            # area random effect
+
+  pr <- c("periurban","rural") # removed grassland rural
+
+  moz.data <- expand.grid(traps=traps,pr=pr,area=area,days=days)
+   lengthMD <- length(moz.data[,1])
+   numReps <- lengthMD/max(traps)
+    days <- sapply(1:numReps,function(x){
+      return(c(rep(x,max(traps))))
+    })
+    moz.data$days <- c(days)
+    
+  moz.data <- sim.glmm(
+      design.data = moz.data,
+      fixed.eff =
+        list(
+          intercept = log(interc),      
+          pr =
+            log(c(periurban = 1,               
+              rural = 0.5))
+              ),
+         rand.V =
+            inv.mor(
+               c(days = daysRand, # 1.8
+                area = areaRand)), #1.8             
+         distribution = "negbinomial",
+      theta=0.5)      
+ return(moz.data)
+}
+
+
+
+```
+
+
+```{r}
+dat1 <- simAbundanceDatFunc(areaRand=3.5,days=1.3)
+
+hist(dat1$response)
+
+ggplot(dat1) +
+  geom_boxplot(aes(x=area,y=response))
+
+ggplot(dat1) +
+  geom_boxplot(aes(x=pr,y=response))
+```
+
+
+Do power analysis once have something reasonable. This can take a while. Best to do c. 1000, currently set to 100.
+
+```{r}
+pwrFunc <- function(...){
+  library("GLMMmisc")
+days <- 1
+traps <- 1:6
+pr <- c("periurban","rural") # removed grassland rural
+area <- LETTERS[1:12]
+
+moz.data <-
+expand.grid(traps=traps,pr=pr,area=area,days=days)
+lengthMD <- length(moz.data[,1])
+numReps <- lengthMD/max(traps)
+days <- sapply(1:numReps,function(x){
+  return(c(rep(x,max(traps))))
+})
+moz.data$days <- c(days)
+
+moz.data<-
+  sim.glmm(
+    design.data = moz.data,
+    fixed.eff =
+      list(
+        intercept = log(5),      
+        pr =
+          log(                     
+            c(periurban = 1,               
+              rural = 0.5))
+        ),
+    rand.V =
+      inv.mor(
+        c(days = 1.8,
+          area = 4)),            
+    distribution = "negbinomial",
+    theta=0.5)      
+
+moz.nb <-
+    lme4::glmer.nb(response ~ pr + (1 | area) + (1| days) , data = moz.data)
+output <- summary(moz.nb)
+cfs<-output$coefficients
+prrural<-cfs[2,4]
+pvalrural <- 0
+
+
+if(length(output$optinfo$conv$lme4$messages)==0){
+if(prrural<=0.05){pvalrural<-1}
+}
+return(c(pvalrural))
+}
+
+
+sim.res <- mclapply(1:100, pwrFunc, mc.cores =1)
+
+l<-do.call(rbind,sim.res)
+l2<-rowSums(l)
+length(l2[l2==1])
+```
+
